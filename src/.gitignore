@@ -1,0 +1,22 @@
+# Maven
+/target/
+
+# IntelliJ IDEA
+/.idea/
+*.iml
+
+# Eclipse
+.classpath
+.project
+.settings/
+
+# Java compilation
+*.class
+
+# Temporary and private files
+*.log
+.env
+.env.*
+
+# Experimental files
+/output/
