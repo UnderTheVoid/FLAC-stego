@@ -55,6 +55,11 @@
                     <mainClass>flacstego.App</mainClass>
                 </configuration>
             </plugin>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.7.0</version>
+            </plugin>
         </plugins>
     </build>
 </project>
