@@ -9,4 +9,6 @@
 - JavaFX
 - libflac-java
 
-##
+##CLI 
+
+mvn exec:java -Dexec.mainClass=flacstego.audio.FlacInfoCli -Dexec.args="samples/test.flac"
