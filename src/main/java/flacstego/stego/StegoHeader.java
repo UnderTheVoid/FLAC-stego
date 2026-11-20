@@ -14,6 +14,8 @@ public final class StegoHeader {
 
     public static final int FIXED_SIZE = 19;
 
+    public static final long MAX_FILE_SIZE = 64L * 1024 * 1024;
+
     private StegoHeader() {}
 
     public record ParsedHeader(String fileName, long fileSize, long crc32) {}
@@ -48,7 +50,7 @@ public final class StegoHeader {
 
         long crc32 = Integer.toUnsignedLong(buffer.getInt());
 
-        if (nameLength == 0 || fileSize < 0) {
+        if (nameLength == 0 || fileSize < 0 || fileSize > MAX_FILE_SIZE) {
             throw new IllegalArgumentException("Некорректные параметры заголовка");
         }
         
@@ -64,7 +66,7 @@ public final class StegoHeader {
             throw new IllegalArgumentException("Некорректная длина имени файла");
         }
         
-        if (fileSize < 0){
+        if (fileSize < 0 || fileSize > MAX_FILE_SIZE){
             throw new IllegalArgumentException("Размер файла не может быть отрицательным");
         }
 

@@ -9,7 +9,6 @@ public final class StegoStreamExtractor {
         FIXED_HEADER, FULL_HEADER, FILE_DATA, DONE
     }
 
-    private static final long MAX_FILE_SIZE = 64L * 1024 * 1024;
     private final ByteArrayOutputStream collected = new ByteArrayOutputStream();
     private Stage stage = Stage.FIXED_HEADER;
     private long expectedBytes = StegoHeader.FIXED_SIZE;
@@ -63,10 +62,6 @@ public final class StegoStreamExtractor {
                 
                 StegoHeader.FixedHeader fixed = StegoHeader.readFixed(collected.toByteArray());
 
-                if (fixed.fileSize() > MAX_FILE_SIZE) {
-                    throw new IllegalArgumentException("Скрытый файл слишком велик");
-                }
-
                 expectedBytes = StegoHeader.FIXED_SIZE + fixed.nameLength();
 
                 stage = Stage.FULL_HEADER;
@@ -75,10 +70,6 @@ public final class StegoStreamExtractor {
             else if (stage == Stage.FULL_HEADER) {
                 
                 StegoHeader.ParsedHeader info = StegoHeader.parse(collected.toByteArray());
-
-                if (info.fileSize() > MAX_FILE_SIZE) {
-                    throw new IllegalArgumentException("Скрытый файл превышает допустимый размер");
-                }
 
                 expectedBytes += info.fileSize();
 

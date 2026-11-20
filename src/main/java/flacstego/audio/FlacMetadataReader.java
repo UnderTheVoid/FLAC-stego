@@ -9,7 +9,7 @@ import java.util.Objects;
 
 public final class FlacMetadataReader {
     public AudioInfo read(Path path) throws IOException{
-        Objects.requireNonNull(path, "Путь к файлу не найден");
+        Objects.requireNonNull(path, "Путь к файлу не должен быть null");
         StreamInfo streamInfo = Metadata.getStreamInfo(path.toString());
         if (streamInfo == null){
             throw new IOException("Не удалось прочитать STREAMINFO из FLAC-файла");
