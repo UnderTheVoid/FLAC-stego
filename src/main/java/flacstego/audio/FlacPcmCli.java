@@ -13,10 +13,18 @@ public final class FlacPcmCli{
         Path path = Path.of(args[0]);
         long[] decodedSamplesPerChannel = {0};
         long[] decodedBlocks = {0};
-        
+        long[] shownSamples = {0};
+
         FlacPcmDecoder decoder = new FlacPcmDecoder();
         decoder.decode(path, (samples, blockSize) -> {
+            
+            for (int i = 0; i < blockSize && shownSamples[0] < 12; i++){
+                for (int channel =0; channel < samples.length && shownSamples[0] < 12; channel++){
 
+                    System.out.println("Канал: " + channel + ", индекс: " + i + ", отсчёт: " + samples[channel][i]);
+                    shownSamples[0]++;
+                }
+            }
             decodedBlocks[0]++;
             if (decodedBlocks[0] <= 3){
 
