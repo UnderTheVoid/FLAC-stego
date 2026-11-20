@@ -54,7 +54,7 @@ public final class LsbStreamWriter {
 
                 int bit = (unsignedByte >>> bitPosition) & 1;
 
-                samples[channel][i] = LsbCodec.embedBit(samples[channel][i], bit);
+                samples[channel][i] = (samples[channel][i] & ~1) | bit;
 
                 bitIndex++;
             }

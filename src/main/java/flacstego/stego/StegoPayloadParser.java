@@ -1,7 +1,6 @@
 package flacstego.stego;
 
 import java.util.Arrays;
-import java.util.Objects;
 import java.util.zip.CRC32;
 
 public final class StegoPayloadParser {
@@ -12,17 +11,10 @@ public final class StegoPayloadParser {
 
     public static ExtractedFile parse(byte[] payload){
 
-        Objects.requireNonNull(payload, "Скрытые данные не должны быть null");
-
-        if (payload.length < StegoHeader.FIXED_SIZE) {
-            throw new IllegalArgumentException("Недостаточно данных для заголовка");
-        }
-
-        int nameLength = ((payload[5] & 0xFF) << 8) | (payload[6] & 0xFF);
-        int headerLength = StegoHeader.FIXED_SIZE + nameLength;
-
-        if (nameLength == 0 || payload.length < headerLength) {
-            throw new IllegalArgumentException("Некорректная длина заголовка");
+        StegoHeader.FixedHeader fixed = StegoHeader.readFixed(payload);
+        int headerLength = StegoHeader.FIXED_SIZE + fixed.nameLength();
+        if (payload.length < headerLength) {
+            throw new IllegalArgumentException("Скрытое сообщение содержит неполный заголовок");
         }
 
         byte[] headerBytes = Arrays.copyOf(payload, headerLength);

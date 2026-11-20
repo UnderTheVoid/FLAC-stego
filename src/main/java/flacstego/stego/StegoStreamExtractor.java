@@ -1,7 +1,6 @@
 package flacstego.stego;
 
 import java.io.ByteArrayOutputStream;
-import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 
 public final class StegoStreamExtractor {
@@ -39,8 +38,8 @@ public final class StegoStreamExtractor {
                     return;
                 }
 
-                int bit = LsbCodec.extractBit(samples[channel][i]);
-                currentByte = (currentByte << 1) & bit;
+                int bit = samples[channel][i] & 1;
+                currentByte = (currentByte << 1) | bit;
                 
                 bitsInCurrentByte++;
 
@@ -61,30 +60,14 @@ public final class StegoStreamExtractor {
         while (stage != Stage.DONE && collected.size() == expectedBytes){
            
             if (stage == Stage.FIXED_HEADER) {
-                byte[] prefix = collected.toByteArray();
+                
+                StegoHeader.FixedHeader fixed = StegoHeader.readFixed(collected.toByteArray());
 
-                byte[] magic = StegoHeader.MAGIC.getBytes(StandardCharsets.US_ASCII);
-
-                for (int i = 0; i < magic.length; i++) {
-
-                    if (prefix[i] != magic[i]) {
-                        throw new IllegalArgumentException("Сигнатура не найдена");
-                    }
+                if (fixed.fileSize() > MAX_FILE_SIZE) {
+                    throw new IllegalArgumentException("Скрытый файл слишком велик");
                 }
 
-                int version = Byte.toUnsignedInt(prefix[4]);
-
-                if (version != StegoHeader.VERSION) {
-                    throw new IllegalArgumentException("Неподдерживаемая версия: " + version);
-                }
-
-                int nameLength = ((prefix[5] & 0xFF) << 8) | (prefix[6] & 0xFF);
-
-                if (nameLength == 0) {
-                    throw new IllegalArgumentException("Пустое имя скрытого файла");
-                }
-
-                expectedBytes = StegoHeader.FIXED_SIZE + nameLength;
+                expectedBytes = StegoHeader.FIXED_SIZE + fixed.nameLength();
 
                 stage = Stage.FULL_HEADER;
             }
