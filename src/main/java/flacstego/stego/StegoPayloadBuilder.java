@@ -13,7 +13,15 @@ public final class StegoPayloadBuilder {
 
         Objects.requireNonNull(path, "Путь не должен быть null");
 
+        if (Files.size(path) > StegoHeader.MAX_FILE_SIZE) {
+            throw new IOException("Скрываемый файл превышает допустимый размер");
+        }
+
         byte[] fileData = Files.readAllBytes(path);
+
+        if (fileData.length > StegoHeader.MAX_FILE_SIZE) {
+            throw new IOException("Скрываемый файл превышает допустимый размер");
+        }
 
         Path fileNamePath = path.getFileName();
 
