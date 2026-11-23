@@ -21,6 +21,8 @@
 # Experimental files
 /output/
 
-#Samples FLAC
-
+# Samples FLAC
 /samples/
+
+# Extracted 
+/extracted/
