@@ -171,25 +171,7 @@ public final class StegoAnalyzer {
             }
         });
 
-        double chiSquare = 0;
-        int pairCount = 0;
-        long coveredSamples = 0;
-
-        for (long[] pair : frequencies.values()) {
-            long total = pair[0] + pair[1];
-
-            if (total < 10) {
-                continue;
-            }
-
-            double diff = (double) pair[0] - pair[1];
-            chiSquare += diff * diff / total;
-
-            pairCount++;
-            coveredSamples += total;
-        }
-        
-        return new ChiSquareStats(chiSquare, pairCount, coveredSamples, analyzedSamples[0]);
+        return calculateChiSquare(frequencies, analyzedSamples[0]);
     }
 
     public static CorrelationStats analyzeCorrelation(Path audioPath) throws IOException {
@@ -246,6 +228,10 @@ public final class StegoAnalyzer {
         r = Math.max(-1.0, Math.min(1.0, r));
 
         return new CorrelationStats(n, r);
+    }
+
+    private static ChiSquareStats calculateChiSquare(Map<Integer, long[]> frequences, long analyzedSamples) {
+
     }
 
     public static void main(String[] args) throws IOException {
