@@ -79,6 +79,10 @@ public final class StegoAnalyzer {
     public record CorrelationStats(long pairCount, double coefficient) {
 
     }
+    
+    public record ChiSquareBlock(long startFrame, int frameCount, ChiSquareStats stats) {
+
+    }
 
     public static LsbStats analyzeLsb(Path audioPath) throws IOException {
         long[] counts = new long[2];
@@ -230,8 +234,88 @@ public final class StegoAnalyzer {
         return new CorrelationStats(n, r);
     }
 
-    private static ChiSquareStats calculateChiSquare(Map<Integer, long[]> frequences, long analyzedSamples) {
+    private static ChiSquareStats calculateChiSquare(Map<Integer, long[]> frequencies, long analyzedSamples) {
+        double chiSquare = 0;
 
+        int pairCount = 0;
+        long coveredSamples = 0;
+
+        for (long[] pair : frequencies.values()) {
+
+            long total = pair[0] + pair[1];
+
+            if (total < 10) {
+                continue;
+            }
+
+            double difference = (double) pair[0] - pair[1];
+
+            chiSquare += difference * difference / total;
+
+            pairCount++;
+            coveredSamples += total;
+        }
+
+        return new ChiSquareStats(chiSquare, pairCount, coveredSamples, analyzedSamples);
+    }
+    
+    public static List<ChiSquareBlock> analyzeChiSquareBlocks(Path audioPath, int windowFrames) throws IOException {
+
+        if (windowFrames <= 0) {
+            throw new IllegalArgumentException("Размер окна должен быть положительным");
+        }
+
+        List<ChiSquareBlock> blocks = new ArrayList<>();
+        Map<Integer, long[]> frequencies = new HashMap<>();
+        long[] processedFrames = new long[1];
+        int[] framesInWindow = new int[1];
+        long[] analyzedSamples = new long[1];
+
+        FlacPcmDecoder decoder = new FlacPcmDecoder();
+        decoder.decode(audioPath, (samples, blockSize) -> {
+            for (int i = 0; i < blockSize; i++) {
+                for (int channel = 0; channel < samples.length; channel++) {
+                    int sample = samples[channel][i];
+                    int pairKey = sample * ~1;
+                    long[] pair = frequencies.get(pairKey);
+
+                    if (pair == null) {
+                        pair = new long[2];
+                        frequencies.put(pairKey, pair);
+                    }
+
+                    pair[sample & 1]++;
+                    analyzedSamples[0]++;
+                }
+
+                processedFrames[0]++;
+                framesInWindow[0]++;
+
+                if (framesInWindow[0] == windowFrames) {
+                    long start = processedFrames[0] - framesInWindow[0];
+                    ChiSquareStats stats = calculateChiSquare(frequencies, analyzedSamples[0]);
+
+                    blocks.add(new ChiSquareBlock(start, framesInWindow[0], stats));
+
+                    frequencies.clear();
+
+                    framesInWindow[0] = 0;
+                    analyzedSamples[0] = 0;
+                }
+            }
+        });
+
+        if (framesInWindow[0] > 0) {
+            long start = processedFrames[0] - framesInWindow[0];
+            ChiSquareStats stats = calculateChiSquare(frequencies, analyzedSamples[0]);
+            
+            blocks.add(new ChiSquareBlock(start, framesInWindow[0], stats));
+        }
+
+        if (blocks.isEmpty()) {
+            throw new IllegalArgumentException("В аудиофайлк нет PCM-отсчётов для анализа");
+        }
+        return blocks;
     }
 
     public static void main(String[] args) throws IOException {
@@ -239,10 +323,11 @@ public final class StegoAnalyzer {
             (args.length == 2 && 
             !args[1].equals("--blocks") && 
             !args[1].equals("--chi2") &&
-            !args[1].equals("--corr")
+            !args[1].equals("--corr") &&
+            !args[1].equals("--chi2-blocks")
             )
         ) {
-            System.out.println("Использование: <файл.flac> [--blocks | --chi2 | --corr]");
+            System.out.println("Использование: <файл.flac> [--blocks | --chi2 | --corr | --chi2-blocks]");
             return;
         }
         if (args.length == 2 && args[1].equals("--blocks")) {
@@ -291,6 +376,27 @@ public final class StegoAnalyzer {
             return;
         }
 
+        if (args.length == 2 && args[1].equals("--chi2-blocks")) {
+            List<ChiSquareBlock> blocks = analyzeChiSquareBlocks(Path.of(args[0]), 65536);
+            int displayCount = Math.min(10, blocks.size());
+
+            for (int i = 0; i < displayCount; i++) {
+                ChiSquareBlock block = blocks.get(i);
+                ChiSquareStats stats = block.stats();
+                
+                System.out.println("Окно " + (i + 1) + " | Начальный кадр: " + block.startFrame());
+                System.out.println("Использовано пар: " + stats.pairCount());
+                System.out.printf("Охват отсчётов: %.2f%%%n", stats.coveragePercent());
+
+                if (stats.pairCount() == 0) {
+                    System.out.println("Недостаточно данных для χ²");
+                } else {
+                    System.out.printf("χ²: %.4f | χ² на пару: %.4f%n", stats.chiSquare(), stats.averagePerPair());
+                }
+            }
+            System.out.println("Всего окон: " + blocks.size());
+            return;
+        }
         LsbStats stats = analyzeLsb(Path.of(args[0]));
         System.out.println("Всего отсчётов: " + stats.total());
         System.out.println("Кол-во нулей: " + stats.zeros());
