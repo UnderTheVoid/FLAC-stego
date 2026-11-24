@@ -3,6 +3,9 @@ package flacstego.analysis;
 import flacstego.audio.FlacPcmDecoder;
 import flacstego.audio.FlacMetadataReader;
 import flacstego.audio.AudioInfo;
+import flacstego.stego.StegoStreamExtractor;
+import flacstego.stego.StegoPayloadParser;
+import flacstego.stego.StegoHeader;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -81,6 +84,14 @@ public final class StegoAnalyzer {
     }
     
     public record ChiSquareBlock(long startFrame, int frameCount, ChiSquareStats stats) {
+
+    }
+
+    public record KnownFormatDetection(boolean confirmed, String fileName, long fileSize, String details) {
+
+    }
+
+    public record SpaStats(long pairCount, long xCount, long yCount, long kCount, double estimatedRate) {
 
     }
 
@@ -318,13 +329,103 @@ public final class StegoAnalyzer {
         return blocks;
     }
 
+    public static KnownFormatDetection detectKnownFormat(Path audioPath) throws IOException {
+        StegoStreamExtractor extractor = new StegoStreamExtractor();
+        FlacPcmDecoder decoder = new FlacPcmDecoder();
+
+        try {
+            decoder.decode(audioPath, (samples, blockSize) -> {
+                extractor.readBlock(samples, blockSize);
+            });
+        } catch (IllegalArgumentException e) {
+            return new KnownFormatDetection(false, null, 0, e.getMessage());
+        }
+
+        if (!extractor.isFinished()) {
+            return new KnownFormatDetection(false, null, 0, "Недостаточно данных для полного скрытого сообщения");
+        }
+
+        StegoPayloadParser.ExtractedFile file = extractor.getResult();
+
+        return new KnownFormatDetection(true, file.fileName(), file.content().length, ("Подтверждён формат " + StegoHeader.MAGIC + ", CRC32 совпадает"));
+    }
+
+    public static SpaStats analyzeSpa(Path audioPath, int maxFrames) throws IOException {
+        if (maxFrames < 2) {
+            throw new IllegalArgumentException("Для SPA необходимо минимум два PCM-кадра");
+        }
+
+        AudioInfo info = new FlacMetadataReader().read(audioPath);
+        int channels = info.channels();
+
+        int[] previous = new int[channels];
+        boolean[] hasPrevious = new boolean[channels];
+
+        long[] xCount = new long[1];
+        long[] yCount = new long[1];
+        long[] kCount = new long[1];
+        long[] pairCount = new long[1];
+        long[] processedFrames = new long[1];
+
+        FlacPcmDecoder decoder = new FlacPcmDecoder();
+        decoder.decode(audioPath, (samples, blockSize) -> {
+            for (int i = 0; i < blockSize && processedFrames[0] < maxFrames; i++) {
+                for (int channel = 0; channel < channels; channel++) {
+                    int current = samples[channel][i];
+
+                    if (hasPrevious[channel]) {
+                        int r = previous[channel];
+                        int s = current;
+
+                        if (((s & 1) == 0 && r < s) || ((s & 1) == 1 && r > s)) {
+                            xCount[0]++;
+                        }
+
+                        if (((s & 1) == 0 && r > s) || ((s & 1) == 1 && r < s)) {
+                            yCount[0]++;
+                        }
+
+                        if ((r & ~1) == (s & ~1)) {
+                            kCount[0]++;
+                        }
+
+                        pairCount[0]++;
+                    }
+
+                    previous[channel] = current;
+                    hasPrevious[channel] = true;
+                }
+
+                processedFrames[0]++;
+            }
+        });
+
+        double rate = Double.NaN;
+
+        double a = kCount[0] / 2.0;
+        double b = 2.0 * xCount[0] - pairCount[0];
+        double c = (double) yCount[0] - xCount[0];
+        double discriminant = b * b - 4 * a * c;
+        if (a > 0 && discriminant >= 0) {
+            double root = (-b - Math.sqrt(discriminant)) / (2 * a);
+            
+            if (root >= 0 && root <= 1) {
+                rate = root;
+            }
+        }
+        
+        return new SpaStats(pairCount[0], xCount[0], yCount[0], kCount[0], rate);
+    }
+
     public static void main(String[] args) throws IOException {
         if (args.length < 1 || args.length > 2 || 
             (args.length == 2 && 
             !args[1].equals("--blocks") && 
             !args[1].equals("--chi2") &&
             !args[1].equals("--corr") &&
-            !args[1].equals("--chi2-blocks")
+            !args[1].equals("--chi2-blocks") && 
+            !args[1].equals("--detect") && 
+            !args[1].equals("--spa")
             )
         ) {
             System.out.println("Использование: <файл.flac> [--blocks | --chi2 | --corr | --chi2-blocks]");
@@ -397,6 +498,69 @@ public final class StegoAnalyzer {
             System.out.println("Всего окон: " + blocks.size());
             return;
         }
+
+        if (args.length == 2 && args[1].equals("--detect")) {
+            KnownFormatDetection result = detectKnownFormat(Path.of(args[0]));
+
+            if (result.confirmed()) {
+                System.out.println("Обнаружено скрытое сообщение формата " + StegoHeader.MAGIC);
+                System.out.println("Имя файла: " + result.fileName());
+                System.out.println("Размер файла: " + result.fileSize());
+            } else {
+                System.out.println("Сообщение формата " + StegoHeader.MAGIC + " не подтверждено");
+            }
+
+            System.out.println(result.details());
+
+            return;
+        }
+
+        if (args.length == 2 && args[1].equals("--spa")) {
+            SpaStats stats = analyzeSpa(Path.of(args[0]), 65535);
+            System.out.println("Исследовано соседних пар: " + stats.pairCount());
+            System.out.println("Группа X: " + stats.xCount());
+            System.out.println("Группа Y: " + stats.yCount());
+            System.out.println("Счётчик K: " + stats.kCount());
+
+            double a = stats.kCount() / 2.0;
+
+            double b = 2.0 * stats.xCount() - stats.pairCount();
+
+            double c = (double) stats.yCount() - stats.xCount();
+
+            double discriminant = b * b - 4 * a * c;
+
+            System.out.printf(
+                    "a = %.4f, b = %.4f, c = %.4f%n",
+                    a, b, c
+            );
+
+            System.out.printf(
+                    "Дискриминант: %.4f%n",
+                    discriminant
+            );
+
+            if (a > 0 && discriminant >= 0) {
+
+                double root1 = (-b - Math.sqrt(discriminant)) / (2 * a);
+
+                double root2 = (-b + Math.sqrt(discriminant)) / (2 * a);
+
+                System.out.printf(
+                        "Корни: %.6f и %.6f%n",
+                        root1, root2
+                );
+            }
+
+            if (Double.isNaN(stats.estimatedRate())) {
+                System.out.println("SPA: достоверную оценку получить не удалось");
+            } else { 
+                System.out.printf("Оценка доли встраивания SPA: %.2f%%%n",stats.estimatedRate() * 100);
+            }
+
+            return;
+        }
+
         LsbStats stats = analyzeLsb(Path.of(args[0]));
         System.out.println("Всего отсчётов: " + stats.total());
         System.out.println("Кол-во нулей: " + stats.zeros());
