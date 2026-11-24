@@ -11,4 +11,4 @@
 
 ##CLI 
 
-mvn exec:java -Dexec.mainClass=flacstego.audio.FlacInfoCli -Dexec.args="samples/test.flac"
+mvn exec:java -Dexec.mainClass= -Dexec.args=
