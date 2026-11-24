@@ -1,6 +1,8 @@
 package flacstego.analysis;
 
 import flacstego.audio.FlacPcmDecoder;
+import flacstego.audio.FlacMetadataReader;
+import flacstego.audio.AudioInfo;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -72,6 +74,10 @@ public final class StegoAnalyzer {
             }
             return  (double) coveredSamples / analyzedSamples * 100;
         }
+    }
+
+    public record CorrelationStats(long pairCount, double coefficient) {
+
     }
 
     public static LsbStats analyzeLsb(Path audioPath) throws IOException {
@@ -186,9 +192,71 @@ public final class StegoAnalyzer {
         return new ChiSquareStats(chiSquare, pairCount, coveredSamples, analyzedSamples[0]);
     }
 
+    public static CorrelationStats analyzeCorrelation(Path audioPath) throws IOException {
+        AudioInfo info = new FlacMetadataReader().read(audioPath);
+        int channels = info.channels();
+        
+        int[] previous = new int[channels];
+        boolean[] hasPrevious = new boolean[channels];
+
+        double[] sumX = new double[1];
+        double[] sumY = new double[1];
+        double[] sumXX = new double[1];
+        double[] sumYY = new double[1];
+        double[] sumXY = new double[1];
+        long[] pairCount = new long[1];           
+    
+        FlacPcmDecoder decoder = new FlacPcmDecoder();
+        decoder.decode(audioPath, (samples, blockSize) -> {
+            for (int i = 0; i < blockSize; i++) {
+                for (int channel = 0; channel < channels; channel++) {
+                    int current = samples[channel][i];
+                    if (hasPrevious[channel]) {
+                        double x = previous[channel];
+                        double y = current;
+
+                        sumX[0] += x;
+                        sumY[0] += y;
+                        sumXX[0] += x * x;
+                        sumYY[0] += y * y;
+                        sumXY[0] += x * y;
+
+                        pairCount[0]++;
+                    }
+                    previous[channel] = current;
+                    hasPrevious[channel] = true;
+                }
+            }
+        });
+
+        long n = pairCount[0];
+        if (n < 2) {
+            return new CorrelationStats(n, Double.NaN);
+        }
+
+        double covariance = sumXY[0] - sumX[0] * sumY[0] / n;
+        double varianceX = sumXX[0] - sumX[0] * sumX[0] / n;
+        double varianceY = sumYY[0] - sumY[0] * sumY[0] / n;
+
+        if (varianceX <= 0 || varianceY <= 0) {
+            return new CorrelationStats(n, Double.NaN);
+        }
+
+        double r = covariance / Math.sqrt(varianceX * varianceY);
+        r = Math.max(-1.0, Math.min(1.0, r));
+
+        return new CorrelationStats(n, r);
+    }
+
     public static void main(String[] args) throws IOException {
-        if (args.length < 1 || args.length > 2 || (args.length == 2 && !args[1].equals("--blocks") && !args[1].equals("--chi2"))) {
-            System.out.println("Использование: <файл.flac> [--blocks | --chi2]");
+        if (args.length < 1 || args.length > 2 || 
+            (args.length == 2 && 
+            !args[1].equals("--blocks") && 
+            !args[1].equals("--chi2") &&
+            !args[1].equals("--corr")
+            )
+        ) {
+            System.out.println("Использование: <файл.flac> [--blocks | --chi2 | --corr]");
             return;
         }
         if (args.length == 2 && args[1].equals("--blocks")) {
@@ -222,6 +290,17 @@ public final class StegoAnalyzer {
                 System.out.println("Недостаточно повторений значений для χ²-анализа");
             } else {
                 System.out.printf("χ² на одну пару: %.4f%n", stats.averagePerPair());
+            }
+            return;
+        }
+
+        if (args.length == 2 && args[1].equals("--corr")) {
+            CorrelationStats stats = analyzeCorrelation(Path.of(args[0]));
+            System.out.println("Кол-во пар: " + stats.pairCount());
+            if (Double.isNaN(stats.coefficient())) {
+                System.out.println("Корреляция не определена");
+            } else {
+                System.out.printf("Коэффицент корреаляции: %.12f%n", stats.coefficient());
             }
             return;
         }
