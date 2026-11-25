@@ -2,6 +2,8 @@ package flacstego.ui;
 
 import flacstego.stego.StegoEmbedCli;
 import flacstego.stego.StegoExtractCli;
+import flacstego.analysis.StegoAnalyzer;
+
 import javafx.concurrent.Task;
 import javafx.geometry.Insets;
 import javafx.scene.control.Button;
@@ -13,6 +15,7 @@ import javafx.scene.layout.VBox;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.control.TextArea;
 import javafx.stage.FileChooser;
 import javafx.stage.DirectoryChooser;
 

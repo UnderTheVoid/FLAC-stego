@@ -100,6 +100,19 @@ public final class StegoAnalyzer {
 
     }
 
+    public record AnalysisReport(
+        KnownFormatDetection format, 
+        LsbStats lsb, 
+        ChiSquareStats chiSquare, 
+        CorrelationStats correlation, 
+        SpaStats spa, 
+        List<LsbBlock> lsbBlocks, 
+        List<ChiSquareBlock> chiSquareBlocks,
+        List<SpaBlock> spaBlocks
+    ) {
+
+    }
+
     public static LsbStats analyzeLsb(Path audioPath) throws IOException {
         long[] counts = new long[2];
         FlacPcmDecoder decoder = new FlacPcmDecoder();
@@ -508,6 +521,20 @@ public final class StegoAnalyzer {
         }
 
         return blocks;
+    }
+
+    public static AnalysisReport analyzReport(Path audioPath) throws IOException {
+        KnownFormatDetection format = detectKnownFormat(audioPath);
+        LsbStats lsb = analyzeLsb(audioPath);
+        ChiSquareStats chiSquare = analyzeChiSquare(audioPath, 65536);
+        CorrelationStats correlation = analyzeCorrelation(audioPath);
+        SpaStats spa = analyzeSpa(audioPath, 65536);
+
+        List<LsbBlock> lsbBlocks = analyzeLsbBlocks(audioPath, 4096);
+        List<ChiSquareBlock> chiSquareBlocks = analyzeChiSquareBlocks(audioPath, 65536);
+        List<SpaBlock> spaBlocks = analyzeSpaBlocks(audioPath, 16384);
+
+        return new AnalysisReport(format, lsb, chiSquare, correlation, spa, lsbBlocks, chiSquareBlocks, spaBlocks);
     }
 
     public static void main(String[] args) throws IOException {
