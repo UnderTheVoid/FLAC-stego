@@ -13,6 +13,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.HashMap;
+import java.util.Arrays;
 
 public final class StegoAnalyzer {
     
@@ -92,6 +93,10 @@ public final class StegoAnalyzer {
     }
 
     public record SpaStats(long pairCount, long xCount, long yCount, long kCount, double estimatedRate) {
+
+    }
+
+    public record SpaBlock(long startFrame, int frameCount, SpaStats stats) {
 
     }
 
@@ -287,7 +292,7 @@ public final class StegoAnalyzer {
             for (int i = 0; i < blockSize; i++) {
                 for (int channel = 0; channel < samples.length; channel++) {
                     int sample = samples[channel][i];
-                    int pairKey = sample * ~1;
+                    int pairKey = sample & ~1;
                     long[] pair = frequencies.get(pairKey);
 
                     if (pair == null) {
@@ -400,11 +405,15 @@ public final class StegoAnalyzer {
             }
         });
 
+        return calculateSpa(pairCount[0], xCount[0], yCount[0], kCount[0]);
+    }
+
+    private static SpaStats calculateSpa(long pairCount, long xCount, long yCount, long kCount) {
         double rate = Double.NaN;
 
-        double a = kCount[0] / 2.0;
-        double b = 2.0 * xCount[0] - pairCount[0];
-        double c = (double) yCount[0] - xCount[0];
+        double a = kCount / 2.0;
+        double b = 2.0 * xCount - pairCount;
+        double c = (double) yCount - xCount;
         double discriminant = b * b - 4 * a * c;
         if (a > 0 && discriminant >= 0) {
             double root = (-b - Math.sqrt(discriminant)) / (2 * a);
@@ -414,7 +423,91 @@ public final class StegoAnalyzer {
             }
         }
         
-        return new SpaStats(pairCount[0], xCount[0], yCount[0], kCount[0], rate);
+        return new SpaStats(pairCount, xCount, yCount, kCount, rate);
+
+    }
+
+    public static List<SpaBlock> analyzeSpaBlocks(Path audioPath, int windowFrames) throws IOException {
+        if (windowFrames < 2) {
+            throw new IllegalArgumentException("Размер окна SPA должен быть не меньше двух кадров");
+        }
+
+        AudioInfo info = new FlacMetadataReader().read(audioPath);
+        int channels = info.channels();
+
+        int[] previous = new int[channels];
+        boolean[] hasPrevious = new boolean[channels];
+
+        List<SpaBlock> blocks = new ArrayList<>();
+        long[] processedFrames = new long[1];
+        int[] framesInWindow = new int[1];
+        long[] xCount = new long[1];
+        long[] yCount = new long[1];
+        long[] kCount = new long[1];
+        long[] pairCount = new long[1];
+
+        FlacPcmDecoder decoder = new FlacPcmDecoder();
+        decoder.decode(audioPath, (samples, blockSize) -> {
+            for (int i = 0; i < blockSize; i++) {
+                for (int channel = 0; channel < channels; channel++) {
+                    int current = samples[channel][i];
+
+                    if (hasPrevious[channel]) {
+                        int r = previous[channel];
+                        int s = current;
+
+                        if (((s & 1) == 0 && r < s) || ((s & 1) == 1 && r > s)) {
+                            xCount[0]++;
+                        }
+
+                        if (((s & 1) == 0 && r > s) || ((s & 1) == 1 && r < s)) {
+                            yCount[0]++;
+                        }
+
+                        if ((r & ~1) == (s & ~1)) {
+                            kCount[0]++;
+                        }
+
+                        pairCount[0]++;
+                    }
+
+                    previous[channel] = current;
+                    hasPrevious[channel] = true;
+                }
+
+                processedFrames[0]++;
+                framesInWindow[0]++;
+
+                if (framesInWindow[0] == windowFrames) {
+                    long start = processedFrames[0] - framesInWindow[0];
+                    SpaStats stats = calculateSpa(pairCount[0], xCount[0], yCount[0], kCount[0]);
+
+                    blocks.add(new SpaBlock(start, framesInWindow[0], stats));
+
+                    xCount[0] = 0;
+                    yCount[0] = 0;
+                    kCount[0] = 0;
+                    pairCount[0] = 0;
+
+                    framesInWindow[0] = 0;
+
+                    Arrays.fill(hasPrevious, false);
+                }
+            }
+        });
+
+        if (framesInWindow[0] > 0) {
+            long start = processedFrames[0] - framesInWindow[0];
+            SpaStats stats = calculateSpa(pairCount[0], xCount[0], yCount[0], kCount[0]);
+
+            blocks.add(new SpaBlock(start, framesInWindow[0], stats));
+        }
+
+        if (blocks.isEmpty()) {
+            throw new IllegalArgumentException("В аудиофайле отсутствуют PCM отсчёты");
+        }
+
+        return blocks;
     }
 
     public static void main(String[] args) throws IOException {
@@ -425,7 +518,8 @@ public final class StegoAnalyzer {
             !args[1].equals("--corr") &&
             !args[1].equals("--chi2-blocks") && 
             !args[1].equals("--detect") && 
-            !args[1].equals("--spa")
+            !args[1].equals("--spa") &&
+            !args[1].equals("--spa-blocks")
             )
         ) {
             System.out.println("Использование: <файл.flac> [--blocks | --chi2 | --corr | --chi2-blocks]");
@@ -558,6 +652,25 @@ public final class StegoAnalyzer {
                 System.out.printf("Оценка доли встраивания SPA: %.2f%%%n",stats.estimatedRate() * 100);
             }
 
+            return;
+        }
+
+        if (args.length == 2 && args[1].equals("--spa-blocks")) {
+            List<SpaBlock> blocks = analyzeSpaBlocks(Path.of(args[0]), 4000);
+            int displayCount = Math.min(20, blocks.size());
+
+            for (int i = 0; i < displayCount; i++) {
+                SpaBlock block = blocks.get(i);
+                SpaStats stats = block.stats();
+                System.out.printf("Окно %d | Кадры %d–%d | Пар: %d | ", i + 1, block.startFrame(), block.startFrame() + block.frameCount() - 1, stats.pairCount());
+                if (Double.isNaN(stats.estimatedRate())) {
+                    System.out.println("SPA: оценка не определена");
+                } else {
+                    System.out.printf("SPA: %.2f%%%n", stats.estimatedRate() * 100);
+                }
+            }
+            System.out.println("Всего окон: " + blocks.size());
+            
             return;
         }
 
