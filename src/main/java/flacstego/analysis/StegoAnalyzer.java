@@ -523,7 +523,7 @@ public final class StegoAnalyzer {
         return blocks;
     }
 
-    public static AnalysisReport analyzReport(Path audioPath) throws IOException {
+    public static AnalysisReport analyzeReport(Path audioPath) throws IOException {
         KnownFormatDetection format = detectKnownFormat(audioPath);
         LsbStats lsb = analyzeLsb(audioPath);
         ChiSquareStats chiSquare = analyzeChiSquare(audioPath, 65536);
