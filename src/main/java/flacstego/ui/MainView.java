@@ -3,7 +3,7 @@ package flacstego.ui;
 import flacstego.stego.StegoEmbedCli;
 import flacstego.stego.StegoExtractCli;
 import flacstego.analysis.StegoAnalyzer;
-
+import flacstego.analysis.StegoAnalyzer.LsbBlock;
 import javafx.concurrent.Task;
 import javafx.geometry.Insets;
 import javafx.scene.control.Button;
@@ -20,12 +20,17 @@ import javafx.scene.Scene;
 import javafx.scene.chart.NumberAxis;
 import javafx.scene.chart.ScatterChart;
 import javafx.scene.chart.XYChart;
+import javafx.scene.layout.StackPane;
+import javafx.scene.control.Tooltip;
+import javafx.scene.control.CheckBox;
 import javafx.stage.Stage;
 import javafx.stage.FileChooser;
 import javafx.stage.DirectoryChooser;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.file.Path;
+import java.nio.file.Files;
 
 public class MainView extends BorderPane {
     private final Label statusLabel = new Label("Приложение запущено");
@@ -266,6 +271,21 @@ public class MainView extends BorderPane {
         resultArea.setPromptText("Результат отобразится здесь");
 
         Button analyzeButton = new Button("Начать анализ");
+        Button graphsButton = new Button("Показать графики");
+        Button saveButton = new Button("Сохранить отчёт");
+
+        saveButton.setDisable(true);
+        graphsButton.setDisable(true);
+
+        saveButton.setOnAction(event -> saveAnalysisReport(resultArea.getText()));
+
+        audioField.textProperty().addListener((observable, oldValue, newValue) -> {
+            resultArea.clear();
+            graphsButton.setDisable(true);
+            saveButton.setDisable(true);
+            statusLabel.setText("FLAC-файл выбран");
+        });
+
         analyzeButton.setOnAction(event -> {
             if (audioField.getText().isBlank()) {
                 statusLabel.setText("Необходимо выбрать FLAC-файл");
@@ -283,14 +303,20 @@ public class MainView extends BorderPane {
 
             analyzeButton.setDisable(true);
             audioButton.setDisable(true);
+            graphsButton.setDisable(true);
+            saveButton.setDisable(true);
             resultArea.clear();
             statusLabel.setText("Выполняется анализ");
                 
             task.setOnSucceeded(done -> {
                 analyzeButton.setDisable(false);
                 audioButton.setDisable(false);
+                saveButton.setDisable(false);
                 resultArea.setText(formatAnalysisSummary(task.getValue()));
                 resultArea.positionCaret(0);
+
+                graphsButton.setOnAction(graphEvent -> showAnalysisCharts(task.getValue()));
+                graphsButton.setDisable(false);
                 statusLabel.setText("Анализ завершён");
             });
 
@@ -307,12 +333,14 @@ public class MainView extends BorderPane {
             });
             
             HBox audioRow = new HBox(10, audioField, audioButton);
+            HBox buttonsRow = new HBox(10, analyzeButton, graphsButton, saveButton);
             HBox.setHgrow(audioField, Priority.ALWAYS);
+
 
             VBox content = new VBox(10,
                 new Label("FLAC для анализа: "),
                 audioRow,
-                analyzeButton,
+                buttonsRow,
                 new Label("Результаты: "),
                 resultArea
             );
@@ -438,14 +466,55 @@ public class MainView extends BorderPane {
         return text.toString();
     }
 
-    
+    private void showAnalysisCharts(StegoAnalyzer.AnalysisReport report) {
+        ScatterChart<Number, Number> lsbChart = createChart("Блочный LSB-анализ", "Доля единиц, %");
+        XYChart.Series<Number, Number> lsbSeries = new XYChart.Series<>(); 
+
+        for (StegoAnalyzer.LsbBlock block : report.lsbBlocks()) {
+            lsbSeries.getData().add(new XYChart.Data<>(block.startSample(), block.stats().onesPercent()));
+        }
+        lsbChart.getData().add(lsbSeries);
+
+        ScatterChart<Number, Number> chiChart = createChart("Блочный χ²-анализ", "χ² на пару");
+        XYChart.Series<Number, Number> chiSeries = new XYChart.Series<>();
+
+        for (StegoAnalyzer.ChiSquareBlock block : report.chiSquareBlocks()) {
+            double value = block.stats().averagePerPair();
+            if (Double.isFinite(value)) {
+                chiSeries.getData().add(new XYChart.Data<>(block.startFrame(), value));
+            }
+        }
+        chiChart.getData().add(chiSeries);
+
+        ScatterChart<Number, Number> spaChart = createChart("Блочный SPA-анализ", "Доля встраивания, %");
+        XYChart.Series<Number, Number> spaSeries = new XYChart.Series<>();
+
+        for (StegoAnalyzer.SpaBlock block : report.spaBlocks()) {
+            double value = block.stats().estimatedRate();
+            if (Double.isFinite(value)) {
+                spaSeries.getData().add(new XYChart.Data<>(block.startFrame(), value * 100));
+            }
+        }
+        spaChart.getData().add(spaSeries);
+
+        TabPane tabs = new TabPane();
+        tabs.getTabs().addAll(new Tab("LSB", lsbChart), new Tab("χ²", chiChart), new Tab("SPA", spaChart));
+        tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+
+        Stage window = new Stage();
+        window.setTitle("Графики стеганоанализа");
+        window.initOwner(getScene().getWindow());
+        window.setScene(new Scene(tabs, 900, 550));
+        window.show();
+    }
 
     private ScatterChart<Number, Number> createChart(String title, String yLabel) {
         NumberAxis xAxis = new NumberAxis();
-        xAxis.setLabel("Начальный кадр окна");
+        xAxis.setLabel("Начальный кадр окна, млн.");
 
         NumberAxis yAxis = new NumberAxis();
         yAxis.setLabel(yLabel);
+        yAxis.setForceZeroInRange(false);
 
         ScatterChart<Number, Number> chart = new ScatterChart<>(xAxis, yAxis);
         chart.setTitle(title);
@@ -453,6 +522,25 @@ public class MainView extends BorderPane {
         chart.setAnimated(false);
 
         return chart;
+    }
+
+    private void saveAnalysisReport(String report) {
+        FileChooser chooser = new FileChooser();
+        chooser.setTitle("Сохранить отчёт стегоанализа");
+        chooser.setInitialFileName("analysis.txt");
+        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("TXT (*.txt)", "*.txt"));
+
+        File file = chooser.showSaveDialog(getScene().getWindow());
+        if (file == null) {
+            return;
+        }
+
+        try {
+            Files.writeString(file.toPath(), report);
+            statusLabel.setText("Отчёт сохранён");
+        } catch (IOException error) {
+            statusLabel.setText("Ошибка сохранения: " + error.getMessage());
+        }
     }
 
 }
