@@ -16,6 +16,11 @@ import javafx.scene.control.TextField;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.control.TextArea;
+import javafx.scene.Scene;
+import javafx.scene.chart.NumberAxis;
+import javafx.scene.chart.ScatterChart;
+import javafx.scene.chart.XYChart;
+import javafx.stage.Stage;
 import javafx.stage.FileChooser;
 import javafx.stage.DirectoryChooser;
 
@@ -431,6 +436,23 @@ public class MainView extends BorderPane {
         }
 
         return text.toString();
+    }
+
+    
+
+    private ScatterChart<Number, Number> createChart(String title, String yLabel) {
+        NumberAxis xAxis = new NumberAxis();
+        xAxis.setLabel("Начальный кадр окна");
+
+        NumberAxis yAxis = new NumberAxis();
+        yAxis.setLabel(yLabel);
+
+        ScatterChart<Number, Number> chart = new ScatterChart<>(xAxis, yAxis);
+        chart.setTitle(title);
+        chart.setLegendVisible(false);
+        chart.setAnimated(false);
+
+        return chart;
     }
 
 }
