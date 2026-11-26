@@ -16,11 +16,11 @@ import java.util.HashMap;
 import java.util.Arrays;
 
 public final class StegoAnalyzer {
-    
+
     private StegoAnalyzer() {}
 
     public record LsbStats(long zeros, long ones) {
-        
+
         public long total() {
             return zeros + ones;
         }
@@ -28,7 +28,7 @@ public final class StegoAnalyzer {
         public double onesPercent() {
             if (total() == 0) {
                 return 0;
-            } 
+            }
             return (double) ones / total() * 100;
         }
 
@@ -48,7 +48,7 @@ public final class StegoAnalyzer {
             double p1 = (double) ones / total();
             double h = 0;
             if (p0 > 0) {
-                h -= p0 * Math.log(p0) / Math.log(2); //Math.log - натуральный логариф log2(x) = ln(x)/ln(2) = Math.log(x)/Math.log(2) 
+                h -= p0 * Math.log(p0) / Math.log(2); //Math.log - натуральный логариф log2(x) = ln(x)/ln(2) = Math.log(x)/Math.log(2)
             }
 
             if (p1 > 0) {
@@ -64,7 +64,7 @@ public final class StegoAnalyzer {
     }
 
     public record ChiSquareStats(double chiSquare, int pairCount, long coveredSamples, long analyzedSamples) {
-        
+
         public double averagePerPair() {
             if(pairCount == 0) {
                 return Double.NaN;
@@ -83,7 +83,7 @@ public final class StegoAnalyzer {
     public record CorrelationStats(long pairCount, double coefficient) {
 
     }
-    
+
     public record ChiSquareBlock(long startFrame, int frameCount, ChiSquareStats stats) {
 
     }
@@ -100,18 +100,14 @@ public final class StegoAnalyzer {
 
     }
 
-    public record AnalysisReport(
-        KnownFormatDetection format, 
-        LsbStats lsb, 
-        ChiSquareStats chiSquare, 
-        CorrelationStats correlation, 
-        SpaStats spa, 
-        List<LsbBlock> lsbBlocks, 
-        List<ChiSquareBlock> chiSquareBlocks,
-        List<SpaBlock> spaBlocks
-    ) {
+    public record ChiSquarePattern(boolean suspicious, int boundaryAfterWindow, double beforeMean,
+                                   double afterMean, double improvement, String explanation) {}
 
-    }
+    public record AnalysisReport(KnownFormatDetection format, LsbStats lsb, ChiSquareStats chiSquare,
+                                 CorrelationStats correlation, SpaStats spa, List<LsbBlock> lsbBlocks,
+                                 List<ChiSquareBlock> chiSquareBlocks, List<SpaBlock> spaBlocks,
+                                 ChiSquarePattern chiSquarePattern) {}
+
 
     public static LsbStats analyzeLsb(Path audioPath) throws IOException {
         long[] counts = new long[2];
@@ -195,7 +191,7 @@ public final class StegoAnalyzer {
                     if (pair == null) {
                         pair = new long[2];
                         frequencies.put(pairKey,pair);
-                    } 
+                    }
 
                     pair[sample & 1]++;
                     analyzedSamples[0]++;
@@ -210,7 +206,7 @@ public final class StegoAnalyzer {
     public static CorrelationStats analyzeCorrelation(Path audioPath) throws IOException {
         AudioInfo info = new FlacMetadataReader().read(audioPath);
         int channels = info.channels();
-        
+
         int[] previous = new int[channels];
         boolean[] hasPrevious = new boolean[channels];
 
@@ -219,8 +215,8 @@ public final class StegoAnalyzer {
         double[] sumXX = new double[1];
         double[] sumYY = new double[1];
         double[] sumXY = new double[1];
-        long[] pairCount = new long[1];           
-    
+        long[] pairCount = new long[1];
+
         FlacPcmDecoder decoder = new FlacPcmDecoder();
         decoder.decode(audioPath, (samples, blockSize) -> {
             for (int i = 0; i < blockSize; i++) {
@@ -287,7 +283,7 @@ public final class StegoAnalyzer {
 
         return new ChiSquareStats(chiSquare, pairCount, coveredSamples, analyzedSamples);
     }
-    
+
     public static List<ChiSquareBlock> analyzeChiSquareBlocks(Path audioPath, int windowFrames) throws IOException {
 
         if (windowFrames <= 0) {
@@ -337,12 +333,12 @@ public final class StegoAnalyzer {
         if (framesInWindow[0] > 0) {
             long start = processedFrames[0] - framesInWindow[0];
             ChiSquareStats stats = calculateChiSquare(frequencies, analyzedSamples[0]);
-            
+
             blocks.add(new ChiSquareBlock(start, framesInWindow[0], stats));
         }
 
         if (blocks.isEmpty()) {
-            throw new IllegalArgumentException("В аудиофайлк нет PCM-отсчётов для анализа");
+            throw new IllegalArgumentException("В аудиофайле нет PCM-отсчётов для анализа");
         }
         return blocks;
     }
@@ -427,15 +423,21 @@ public final class StegoAnalyzer {
         double a = kCount / 2.0;
         double b = 2.0 * xCount - pairCount;
         double c = (double) yCount - xCount;
-        double discriminant = b * b - 4 * a * c;
-        if (a > 0 && discriminant >= 0) {
-            double root = (-b - Math.sqrt(discriminant)) / (2 * a);
-            
-            if (root >= 0 && root <= 1) {
-                rate = root;
+        double epsilon = 1e-5;
+        double root = Double.NaN;
+        if (a == 0) {
+            if (b != 0) {
+                root = -c / b;
+            }
+        } else {
+            double discriminant = b * b - 4 * a * c;
+            if (discriminant >= 0) {
+                root = (-b - Math.sqrt(discriminant)) / (2 * a);
             }
         }
-        
+        if (root >= -epsilon && root <= 1 + epsilon) {
+            rate = Math.max(0, Math.min(1, root));
+        }
         return new SpaStats(pairCount, xCount, yCount, kCount, rate);
 
     }
@@ -523,33 +525,95 @@ public final class StegoAnalyzer {
         return blocks;
     }
 
+    public static ChiSquarePattern analyzeChiSquarePattern(List<ChiSquareBlock> blocks) {
+        int minWindows = 8;
+        int validCount = 0;
+        double[] sums = new double[blocks.size() + 1];
+        double mean = 0;
+        double totalError = 0;
+        boolean invalidWindow = false;
+        for (ChiSquareBlock block : blocks) {
+            ChiSquareStats stats = block.stats();
+            if (stats.pairCount() < 500 || stats.coveragePercent() < 20.0) {
+                invalidWindow = true;
+                continue;
+            }
+            if (invalidWindow) {
+                return unavailablePattern("Внутри ряда есть окна с недостаточным охватом или числом пар.");
+            }
+            double value = stats.averagePerPair();
+            validCount++;
+            sums[validCount] = sums[validCount - 1] + value;
+            double delta = value - mean;
+            mean += delta / validCount;
+            totalError += delta * (value - mean);
+        }
+        if (validCount < 2 * minWindows) {
+            return unavailablePattern("Для сравнения нужно хотя бы 16 пригодных окон подряд.");
+        }
+        if (totalError == 0) {
+            return unavailablePattern("Значение χ² на пару одинаково во всех пригодных окнах.");
+        }
+
+        // Выигрыш по сумме квадратов ошибок при разделении на два участка.
+        double bestGain = -1;
+        double beforeMean = Double.NaN;
+        double afterMean = Double.NaN;
+        int bestCut = 0;
+        for (int cut = minWindows; cut <= validCount - minWindows; cut++) {
+            int remaining = validCount - cut;
+            double before = sums[cut] / cut;
+            double after = (sums[validCount] - sums[cut]) / remaining;
+            double difference = after - before;
+            double gain = difference * difference * cut * remaining / validCount;
+            if (gain > bestGain) {
+                bestGain = gain;
+                bestCut = cut;
+                beforeMean = before;
+                afterMean = after;
+            }
+        }
+        double improvement = Math.min(1, bestGain / totalError);
+        boolean suspicious = afterMean - beforeMean >= 0.04 && improvement >= 0.40
+                && beforeMean >= 0.90 && beforeMean <= 1.10;
+        String explanation = suspicious ? "Есть статистический переход χ², возможный признак встраивания."
+                : "Переход, отвечающий критериям χ², не найден.";
+        return new ChiSquarePattern(suspicious, bestCut, beforeMean, afterMean, improvement, explanation);
+    }
+
+    private static ChiSquarePattern unavailablePattern(String explanation) {
+        return new ChiSquarePattern(false, 0, Double.NaN, Double.NaN, Double.NaN, explanation);
+    }
+
     public static AnalysisReport analyzeReport(Path audioPath) throws IOException {
-        KnownFormatDetection format = detectKnownFormat(audioPath);
-        LsbStats lsb = analyzeLsb(audioPath);
-        ChiSquareStats chiSquare = analyzeChiSquare(audioPath, 65536);
-        CorrelationStats correlation = analyzeCorrelation(audioPath);
-        SpaStats spa = analyzeSpa(audioPath, 65536);
+        List<ChiSquareBlock> blocks = analyzeChiSquareBlocks(audioPath, 65536);
+        return new AnalysisReport(detectKnownFormat(audioPath), analyzeLsb(audioPath), analyzeChiSquare(audioPath, 65536),
+                analyzeCorrelation(audioPath), analyzeSpa(audioPath, 65536), analyzeLsbBlocks(audioPath, 4096),
+                blocks, analyzeSpaBlocks(audioPath, 32768), analyzeChiSquarePattern(blocks));
+    }
 
-        List<LsbBlock> lsbBlocks = analyzeLsbBlocks(audioPath, 4096);
-        List<ChiSquareBlock> chiSquareBlocks = analyzeChiSquareBlocks(audioPath, 65536);
-        List<SpaBlock> spaBlocks = analyzeSpaBlocks(audioPath, 16384);
-
-        return new AnalysisReport(format, lsb, chiSquare, correlation, spa, lsbBlocks, chiSquareBlocks, spaBlocks);
+    private static void printPattern(ChiSquarePattern pattern) {
+        System.out.println(pattern.explanation());
+        if (pattern.boundaryAfterWindow() > 0) {
+            System.out.printf("Лучшее разбиение после окна %d | Среднее до: %.4f | После: %.4f | Снижение ошибки: %.1f%%%n",
+                    pattern.boundaryAfterWindow(), pattern.beforeMean(), pattern.afterMean(), pattern.improvement() * 100);
+        }
     }
 
     public static void main(String[] args) throws IOException {
-        if (args.length < 1 || args.length > 2 || 
-            (args.length == 2 && 
-            !args[1].equals("--blocks") && 
+        if (args.length < 1 || args.length > 2 ||
+            (args.length == 2 &&
+            !args[1].equals("--blocks") &&
             !args[1].equals("--chi2") &&
             !args[1].equals("--corr") &&
-            !args[1].equals("--chi2-blocks") && 
-            !args[1].equals("--detect") && 
+            !args[1].equals("--chi2-blocks") &&
+            !args[1].equals("--detect") &&
             !args[1].equals("--spa") &&
-            !args[1].equals("--spa-blocks")
+            !args[1].equals("--spa-blocks") &&
+            !args[1].equals("--chi2-pattern") && !args[1].equals("--report")
             )
         ) {
-            System.out.println("Использование: <файл.flac> [--blocks | --chi2 | --corr | --chi2-blocks]");
+            System.out.println("Использование: <файл.flac> [--blocks | --chi2 | --corr | --chi2-blocks | --detect | --spa | --spa-blocks | --chi2-pattern | --report]");
             return;
         }
         if (args.length == 2 && args[1].equals("--blocks")) {
@@ -558,12 +622,12 @@ public final class StegoAnalyzer {
 
             for (int i = 0; i < displayCount; i++) {
                 LsbBlock block = blocks.get(i);
-                System.out.printf("Окно %d | Отсчёты %d-%d | " + "Нули: %d | Единицы %d | " + "Доля единиц: %.2f%%%n", 
-                    i + 1, 
-                    block.startSample, 
-                    block.startSample + block.samplesPerChannel - 1, 
-                    block.stats().zeros, 
-                    block.stats().ones(), 
+                System.out.printf("Окно %d | Отсчёты %d-%d | " + "Нули: %d | Единицы %d | " + "Доля единиц: %.2f%%%n",
+                    i + 1,
+                    block.startSample,
+                    block.startSample + block.samplesPerChannel - 1,
+                    block.stats().zeros,
+                    block.stats().ones(),
                     block.stats().onesPercent()
                 );
                 System.out.printf("Энтропия окна: %.4f бит/символ%n", block.stats.entropy());
@@ -574,7 +638,7 @@ public final class StegoAnalyzer {
 
         if (args.length == 2 && args[1].equals("--chi2")) {
             ChiSquareStats stats = analyzeChiSquare(Path.of(args[0]), 65536);
-            
+
             System.out.printf("Статистика χ²: %.4f%n", stats.chiSquare());
             System.out.println("Использовано пар: " + stats.pairCount());
             System.out.printf("Охват отсчётов: %.2f%%%n", stats.coveragePercent());
@@ -593,7 +657,7 @@ public final class StegoAnalyzer {
             if (Double.isNaN(stats.coefficient())) {
                 System.out.println("Корреляция не определена");
             } else {
-                System.out.printf("Коэффицент корреаляции: %.12f%n", stats.coefficient());
+                System.out.printf("Коэффициент корреляции: %.12f%n", stats.coefficient());
             }
             return;
         }
@@ -605,7 +669,7 @@ public final class StegoAnalyzer {
             for (int i = 0; i < displayCount; i++) {
                 ChiSquareBlock block = blocks.get(i);
                 ChiSquareStats stats = block.stats();
-                
+
                 System.out.println("Окно " + (i + 1) + " | Начальный кадр: " + block.startFrame());
                 System.out.println("Использовано пар: " + stats.pairCount());
                 System.out.printf("Охват отсчётов: %.2f%%%n", stats.coveragePercent());
@@ -637,45 +701,15 @@ public final class StegoAnalyzer {
         }
 
         if (args.length == 2 && args[1].equals("--spa")) {
-            SpaStats stats = analyzeSpa(Path.of(args[0]), 65535);
+            SpaStats stats = analyzeSpa(Path.of(args[0]), 65536);
             System.out.println("Исследовано соседних пар: " + stats.pairCount());
             System.out.println("Группа X: " + stats.xCount());
             System.out.println("Группа Y: " + stats.yCount());
             System.out.println("Счётчик K: " + stats.kCount());
 
-            double a = stats.kCount() / 2.0;
-
-            double b = 2.0 * stats.xCount() - stats.pairCount();
-
-            double c = (double) stats.yCount() - stats.xCount();
-
-            double discriminant = b * b - 4 * a * c;
-
-            System.out.printf(
-                    "a = %.4f, b = %.4f, c = %.4f%n",
-                    a, b, c
-            );
-
-            System.out.printf(
-                    "Дискриминант: %.4f%n",
-                    discriminant
-            );
-
-            if (a > 0 && discriminant >= 0) {
-
-                double root1 = (-b - Math.sqrt(discriminant)) / (2 * a);
-
-                double root2 = (-b + Math.sqrt(discriminant)) / (2 * a);
-
-                System.out.printf(
-                        "Корни: %.6f и %.6f%n",
-                        root1, root2
-                );
-            }
-
             if (Double.isNaN(stats.estimatedRate())) {
                 System.out.println("SPA: достоверную оценку получить не удалось");
-            } else { 
+            } else {
                 System.out.printf("Оценка доли встраивания SPA: %.2f%%%n",stats.estimatedRate() * 100);
             }
 
@@ -683,7 +717,7 @@ public final class StegoAnalyzer {
         }
 
         if (args.length == 2 && args[1].equals("--spa-blocks")) {
-            List<SpaBlock> blocks = analyzeSpaBlocks(Path.of(args[0]), 4000);
+            List<SpaBlock> blocks = analyzeSpaBlocks(Path.of(args[0]), 32768);
             int displayCount = Math.min(20, blocks.size());
 
             for (int i = 0; i < displayCount; i++) {
@@ -697,7 +731,33 @@ public final class StegoAnalyzer {
                 }
             }
             System.out.println("Всего окон: " + blocks.size());
-            
+
+            return;
+        }
+
+        if (args.length == 2 && args[1].equals("--chi2-pattern")) {
+            printPattern(analyzeChiSquarePattern(analyzeChiSquareBlocks(Path.of(args[0]), 65536)));
+            return;
+        }
+
+        if (args.length == 2 && args[1].equals("--report")) {
+            AnalysisReport report = analyzeReport(Path.of(args[0]));
+            System.out.println("Проверка формата: " + report.format().details());
+            if (report.format().confirmed()) {
+                System.out.printf("Вложение: %s (%d байт)%n", report.format().fileName(), report.format().fileSize());
+            }
+            System.out.printf("LSB: нулей %d, единиц %d (%.2f%%), энтропия %.4f бит/символ%n",
+                    report.lsb().zeros(), report.lsb().ones(), report.lsb().onesPercent(), report.lsb().entropy());
+            System.out.printf("χ² на пару: %.4f | Охват: %.2f%%%n", report.chiSquare().averagePerPair(), report.chiSquare().coveragePercent());
+            System.out.printf("Корреляция: %.6f%n", report.correlation().coefficient());
+            if (Double.isFinite(report.spa().estimatedRate())) {
+                System.out.printf("Оценка SPA: %.2f%%%n", report.spa().estimatedRate() * 100);
+            } else {
+                System.out.println("Оценка SPA не определена.");
+            }
+            System.out.printf("Число окон LSB: %d | χ²: %d | SPA: %d%n",
+                    report.lsbBlocks().size(), report.chiSquareBlocks().size(), report.spaBlocks().size());
+            printPattern(report.chiSquarePattern());
             return;
         }
 
