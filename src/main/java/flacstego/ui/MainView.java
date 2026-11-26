@@ -285,6 +285,7 @@ public class MainView extends BorderPane {
                 analyzeButton.setDisable(false);
                 audioButton.setDisable(false);
                 resultArea.setText(formatAnalysisSummary(task.getValue()));
+                resultArea.positionCaret(0);
                 statusLabel.setText("Анализ завершён");
             });
 
@@ -329,6 +330,8 @@ public class MainView extends BorderPane {
             text.append("Сообщение известного формата не подтверждено\n");
         }
 
+        text.append("Подробности: ").append(report.format().details()).append("\n");
+
         text.append("\nLSB-СТАТИСТИКА\n");
         text.append("Всего отсчётов: ").append(report.lsb().total()).append('\n');
         text.append(String.format("Доля нулей: %.2f%%%n", report.lsb().zerosPercent()));
@@ -364,50 +367,67 @@ public class MainView extends BorderPane {
         }
 
         text.append("\nБЛОЧНЫЙ LSB-АНАЛИЗ\n");
+        text.append("Размер окна: 4096 кадров\n");
         text.append("Всего окон: ").append(report.lsbBlocks().size()).append('\n');
 
-        int lsbLimit = Math.min(10, report.lsbBlocks().size());
-
-        for (int i = 0; i < lsbLimit; i++) {
+        for (int i = 0; i < report.lsbBlocks().size(); i++) {
             StegoAnalyzer.LsbBlock block = report.lsbBlocks().get(i);
             StegoAnalyzer.LsbStats stats = block.stats();
 
-            text.append(String.format("Окно %d | Кадры %d–%d | Единицы: %.2f%% | Энтропия: %.4f%n",
+            text.append(String.format("Окно %d | Кадры %d–%d | Нули: %.2f%% | Единицы: %.2f%% | Энтропия: %.4f%n",
                 i + 1, block.startSample(), block.startSample() + block.samplesPerChannel() - 1,
-                stats.onesPercent(), stats.entropy()));
+                stats.zerosPercent(), stats.onesPercent(), stats.entropy()));
         }
 
         text.append("\nБЛОЧНЫЙ χ²-АНАЛИЗ\n");
+        text.append("Размер окна: 65536 кадров\n");
         text.append("Всего окон: ").append(report.chiSquareBlocks().size()).append('\n');
 
-        int chiLimit = Math.min(10, report.chiSquareBlocks().size());
-
-        for (int i = 0; i < chiLimit; i++) {
+        for (int i = 0; i < report.chiSquareBlocks().size(); i++) {
             StegoAnalyzer.ChiSquareBlock block = report.chiSquareBlocks().get(i);
             StegoAnalyzer.ChiSquareStats stats = block.stats();
 
-            text.append(String.format("Окно %d | Кадры %d–%d | χ²: %.4f | Пар значений: %d | Охват: %.2f%%%n",
+            text.append(String.format("Окно %d | Кадры %d–%d | χ²: %.4f | Пар значений: %d | Охват: %.2f%%",
                 i + 1, block.startFrame(), block.startFrame() + block.frameCount() - 1,
                 stats.chiSquare(), stats.pairCount(), stats.coveragePercent()));
+
+            if (stats.pairCount() > 0) {
+                text.append(String.format(" | χ² на пару: %.4f%n", stats.averagePerPair()));
+            } else {
+                text.append(" | χ² на пару не определено\n");
+            }
         }
 
-        text.append("\nБЛОЧНЫЙ SPA\n");
+        text.append("\nБЛОЧНЫЙ SPA-АНАЛИЗ\n");
+        text.append("Размер окна: 32768 кадров\n");
         text.append("Всего окон: ").append(report.spaBlocks().size()).append('\n');
 
-        int spaLimit = Math.min(20, report.spaBlocks().size());
-
-        for (int i = 0; i < spaLimit; i++) {
+        for (int i = 0; i < report.spaBlocks().size(); i++) {
             StegoAnalyzer.SpaBlock block = report.spaBlocks().get(i);
             StegoAnalyzer.SpaStats stats = block.stats();
 
             text.append(String.format("Окно %d | Кадры %d–%d | Пар: %d | ",
-                i + 1, block.startFrame(), block.startFrame() + block.frameCount() - 1, stats.pairCount()));
+                i + 1, block.startFrame(), block.startFrame() + block.frameCount() - 1,
+                stats.pairCount()));
 
             if (Double.isNaN(stats.estimatedRate())) {
                 text.append("Оценка не определена\n");
             } else {
                 text.append(String.format("Оценка SPA: %.2f%%%n", stats.estimatedRate() * 100));
             }
+}
+        text.append("\nПОИСК ГРАНИЦЫ ВСТРАИВАНИЯ\n");
+
+        StegoAnalyzer.ChiSquarePattern pattern = report.chiSquarePattern();
+
+        text.append(pattern.explanation()).append('\n');
+
+        if (pattern.suspicious()) {
+            text.append("Предполагаемая граница после окна: ")
+                .append(pattern.boundaryAfterWindow()).append('\n');
+
+            text.append(String.format("Среднее χ² на пару до границы: %.4f%n", pattern.beforeMean()));
+            text.append(String.format("Среднее χ² на пару после границы: %.4f%n", pattern.afterMean()));
         }
 
         return text.toString();
