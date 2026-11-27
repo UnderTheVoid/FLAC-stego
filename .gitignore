@@ -1,5 +1,10 @@
 # Maven
 /target/
+/dependency-reduced-pom.xml
+
+# VScode
+/.vscode/
+/.VScodeCounter/
 
 # IntelliJ IDEA
 /.idea/
@@ -20,9 +25,8 @@
 
 # Experimental files
 /output/
+/flac-stego-review.tar.gz
 
-# Samples FLAC
-/samples/
-
-# Extracted 
-/extracted/
+# Operating system files
+.DS_Store
+Thumbs.db

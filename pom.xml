@@ -6,7 +6,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>flacstego</groupId>
     <artifactId>flac-stego</artifactId>
-    <version>0.2.0</version>
+    <version>1.0.0</version>
     <name>FLAC-stego</name>
     <packaging>jar</packaging>
     <properties>
