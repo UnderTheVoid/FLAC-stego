@@ -58,7 +58,7 @@ public class MainView extends BorderPane {
         
         TextField audioField = new TextField();
         audioField.setPromptText("Flac не выбран");
-        audioField.setEditable(false);
+        audioField.setEditable(true);
 
         Button audioButton = new Button("Обзор...");
 
@@ -75,7 +75,7 @@ public class MainView extends BorderPane {
 
         TextField secretField = new TextField();
         secretField.setPromptText("Скрываемый файл не выбран");
-        secretField.setEditable(false);
+        secretField.setEditable(true);
 
         Button secretButton = new Button("Обзор...");
         secretButton.setOnAction(event -> {
@@ -90,7 +90,7 @@ public class MainView extends BorderPane {
 
         TextField outputField = new TextField();
         outputField.setPromptText("Путь сохранения готового файла не выбран");
-        outputField.setEditable(false);
+        outputField.setEditable(true);
 
         Button outputButton = new Button("Сохранить как...");
         outputButton.setOnAction(event -> {
@@ -166,7 +166,7 @@ public class MainView extends BorderPane {
 
         TextField audioField = new TextField();
         audioField.setPromptText("FLAC не выбран");
-        audioField.setEditable(false);
+        audioField.setEditable(true);
 
         Button audioButton = new Button("Обзор...");
         audioButton.setOnAction(event -> {
@@ -181,7 +181,7 @@ public class MainView extends BorderPane {
 
         TextField directoryField = new TextField();
         directoryField.setPromptText("Папка сохранения не выбрана");
-        directoryField.setEditable(false);
+        directoryField.setEditable(true);
 
         Button directoryButton = new Button("Обзор...");
         directoryButton.setOnAction(event -> {
@@ -468,43 +468,87 @@ public class MainView extends BorderPane {
 
     private void showAnalysisCharts(StegoAnalyzer.AnalysisReport report) {
         ScatterChart<Number, Number> lsbChart = createChart("Блочный LSB-анализ", "Доля единиц, %");
-        XYChart.Series<Number, Number> lsbSeries = new XYChart.Series<>(); 
+        XYChart.Series<Number, Number> lsbSeries = new XYChart.Series<>();
 
         for (StegoAnalyzer.LsbBlock block : report.lsbBlocks()) {
-            lsbSeries.getData().add(new XYChart.Data<>(block.startSample(), block.stats().onesPercent()));
+            addChartPoint(lsbSeries, block.startSample(), block.stats().onesPercent());
         }
         lsbChart.getData().add(lsbSeries);
 
         ScatterChart<Number, Number> chiChart = createChart("Блочный χ²-анализ", "χ² на пару");
         XYChart.Series<Number, Number> chiSeries = new XYChart.Series<>();
 
+        int outsideZoom = 0;
+
         for (StegoAnalyzer.ChiSquareBlock block : report.chiSquareBlocks()) {
             double value = block.stats().averagePerPair();
+
             if (Double.isFinite(value)) {
-                chiSeries.getData().add(new XYChart.Data<>(block.startFrame(), value));
+                addChartPoint(chiSeries, block.startFrame(), value);
+
+                if (value < 0.8 || value > 1.2) {
+                    outsideZoom++;
+                }
             }
         }
         chiChart.getData().add(chiSeries);
 
-        ScatterChart<Number, Number> spaChart = createChart("Блочный SPA-анализ", "Доля встраивания, %");
+        NumberAxis chiAxis = (NumberAxis) chiChart.getYAxis();
+        CheckBox chiZoom = new CheckBox("Приблизить область χ² от 0.8 до 1.2");
+        Label chiInfo = new Label("За пределами диапазона приближения: " + outsideZoom + " окон");
+
+        chiZoom.selectedProperty().addListener((observable, oldValue, newValue) -> {
+            if (newValue) {
+                chiAxis.setAutoRanging(false);
+                chiAxis.setLowerBound(0.8);
+                chiAxis.setUpperBound(1.2);
+                chiAxis.setTickUnit(0.05);
+            } else {
+                chiAxis.setAutoRanging(true);
+            }
+        });
+
+        chiZoom.setSelected(true);
+
+        VBox chiContent = new VBox(5, chiZoom, chiInfo, chiChart);
+        chiContent.setPadding(new Insets(5));
+        VBox.setVgrow(chiChart, Priority.ALWAYS);
+
+        ScatterChart<Number, Number> spaChart = createChart("Блочный SPA-анализ", "Оценка доли встраивания, %");
         XYChart.Series<Number, Number> spaSeries = new XYChart.Series<>();
 
         for (StegoAnalyzer.SpaBlock block : report.spaBlocks()) {
             double value = block.stats().estimatedRate();
             if (Double.isFinite(value)) {
-                spaSeries.getData().add(new XYChart.Data<>(block.startFrame(), value * 100));
+                addChartPoint(spaSeries, block.startFrame(), value * 100);
             }
         }
         spaChart.getData().add(spaSeries);
 
+        NumberAxis spaAxis = (NumberAxis) spaChart.getYAxis();
+        spaAxis.setAutoRanging(false);
+        spaAxis.setLowerBound(0);
+        spaAxis.setUpperBound(100);
+        spaAxis.setTickUnit(10);
+
+        int totalWindows = report.spaBlocks().size();
+        int definedWindows = spaSeries.getData().size();
+
+        Label spaInfo = new Label("Определено окон: " + definedWindows + " из " + totalWindows
+            + " | Не определено: " + (totalWindows - definedWindows));
+
+        VBox spaContent = new VBox(5, spaInfo, spaChart);
+        spaContent.setPadding(new Insets(5));
+        VBox.setVgrow(spaChart, Priority.ALWAYS);
+
         TabPane tabs = new TabPane();
-        tabs.getTabs().addAll(new Tab("LSB", lsbChart), new Tab("χ²", chiChart), new Tab("SPA", spaChart));
+        tabs.getTabs().addAll(new Tab("LSB", lsbChart), new Tab("χ²", chiContent), new Tab("SPA", spaContent));
         tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
 
         Stage window = new Stage();
-        window.setTitle("Графики стеганоанализа");
+        window.setTitle("Графики стегоанализа");
         window.initOwner(getScene().getWindow());
-        window.setScene(new Scene(tabs, 900, 550));
+        window.setScene(new Scene(tabs, 1000, 600));
         window.show();
     }
 
@@ -541,6 +585,18 @@ public class MainView extends BorderPane {
         } catch (IOException error) {
             statusLabel.setText("Ошибка сохранения: " + error.getMessage());
         }
+    }
+
+    private void addChartPoint(XYChart.Series<Number, Number> series, long frame, double value) {
+        XYChart.Data<Number, Number> point = new XYChart.Data<>(frame / 1_000_000.0, value);
+
+        StackPane marker = new StackPane();
+        marker.setStyle("-fx-background-color: #e76d32; -fx-background-radius: 3px; -fx-background-insets: 0; -fx-padding: 2px;");
+
+        Tooltip.install(marker, new Tooltip(String.format("Кадр: %d%nЗначение: %.4f", frame, value)));
+
+        point.setNode(marker);
+        series.getData().add(point);
     }
 
 }
