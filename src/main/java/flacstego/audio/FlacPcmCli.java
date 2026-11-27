@@ -43,7 +43,7 @@ public final class FlacPcmCli{
         long capacityBytes = capacityBits / 8;
 
         System.out.println("Кол-во каналов: " + info.channels());
-        System.out.println("Теоретическая вместимость бит: " + capacityBytes);
+        System.out.println("Теоретическая вместимость байт: " + capacityBytes);
 
         System.out.println("Декодировано отсчётов на канал: " + decodedSamplesPerChannel[0]);
         System.out.println("Всего PCM блоков: " + decodedBlocks[0]);
